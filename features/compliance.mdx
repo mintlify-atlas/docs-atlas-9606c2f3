@@ -1,0 +1,90 @@
+---
+title: "Continuous compliance and policy enforcement"
+description: "Move beyond point-in-time audits with continuous policy enforcement, persistent audit logging, and traceable evidence for internal and regulatory review."
+keywords: ["compliance", "policy enforcement", "audit trail", "continuous compliance", "regulatory compliance", "vulnerability tracking", "traceability"]
+---
+
+Point-in-time compliance audits create a false sense of security. A device that passes a check today may be out of compliance tomorrow, and a manual audit cycle that runs quarterly leaves months of undetected drift unaddressed. NextAudit AI is built around a continuous compliance model — policies run constantly, results are logged persistently, and your compliance posture is always current rather than a snapshot from a past moment in time.
+
+## The compliance challenge
+
+Security and compliance teams face a consistent set of problems: fleets grow faster than audit processes scale, regulatory requirements demand evidence that policies were enforced (not just that they exist), and the gap between a compliance failure and its detection creates real risk. NextAudit AI addresses all three by making compliance enforcement automated, continuous, and fully auditable.
+
+<Note>
+  NextAudit AI is currently evolving toward its full SaaS product form. The README describes the platform as actively prioritizing real-time fleet observability, policy-driven automated auditing, and AI-assisted analysis and response. Some compliance features described here represent the platform's near-term roadmap alongside currently deployed capabilities.
+</Note>
+
+## Policy-based auditing
+
+Compliance in NextAudit AI is defined through policies — discrete, queryable checks that run against enrolled endpoints on a continuous basis. Each policy answers a specific question about device state:
+
+- Is full-disk encryption enabled on this device?
+- Is the operating system patched to the required minimum version?
+- Are prohibited applications absent from this endpoint?
+- Is the required security agent installed and running?
+
+Policies are evaluated by FleetDM using osquery, which reads device state directly. Results are either pass or fail for each device, and failures are surfaced immediately rather than waiting for a scheduled review cycle.
+
+<Info>
+  Because policies are SQL-based osquery queries, they are precise and deterministic. The same policy produces the same result on the same device state, making compliance checks reproducible and defensible for audit purposes.
+</Info>
+
+## Continuous compliance vs. point-in-time audits
+
+Traditional compliance frameworks often rely on periodic assessments — an annual audit, a quarterly review, a monthly scan. The problem is that compliance state can change between assessments, and you have no visibility into that drift until the next scheduled check.
+
+NextAudit AI's continuous model changes this:
+
+| Traditional auditing | Continuous compliance |
+|---|---|
+| Scheduled, periodic | Always running |
+| Snapshot of a single moment | Ongoing state tracking |
+| Manual evidence collection | Automated log collection |
+| Findings discovered retrospectively | Failures surfaced in real time |
+| Compliance as a project | Compliance as a process |
+
+With continuous monitoring, your team sees compliance drift as it happens. Devices that fall out of policy are visible immediately, and automated n8n workflows can trigger remediation steps or alerts without waiting for a human review cycle.
+
+## Traceability and audit trails
+
+Every action in NextAudit AI is logged. Fleet status and query results are written to persistent log files (`FLEET_FILESYSTEM_STATUS_LOG_FILE`, `FLEET_FILESYSTEM_RESULT_LOG_FILE`). n8n records workflow execution history for every automation run. The result is a complete, traceable record of what was checked, when it was checked, and what the result was.
+
+<Tip>
+  Enabling JSON-format logging (`FLEET_LOGGING_JSON=true`) produces structured log output that is directly parseable by log aggregation systems. This makes it straightforward to forward audit logs to a SIEM or compliance evidence repository.
+</Tip>
+
+This traceability is important for two distinct reasons:
+
+1. **Internal compliance** — your operations team can demonstrate that policies were enforced continuously, not just at audit time
+2. **Regulatory compliance** — auditors and regulators can review a factual log of compliance state over time rather than relying on self-reported summaries
+
+## Vulnerability tracking
+
+NextAudit AI maintains a local vulnerability database (`vulndb`) that the FleetDM vulnerability scanner uses to match installed software against known CVEs. This database is updated on a configurable schedule (`FLEET_VULNERABILITIES_PERIODICITY`) and checked against device software inventories automatically.
+
+Keeping the vulnerability database local means:
+
+- Vulnerability data is available for scanning even in air-gapped or restricted-network environments
+- No device software inventory is sent to external lookup services
+- Scan frequency can be tuned to match your organization's patch management SLA
+
+Vulnerability findings feed directly into your compliance posture — devices with unpatched critical CVEs can be flagged as non-compliant and routed into remediation workflows automatically.
+
+<Note>
+  The vulnerability database is stored in the `vulndb` volume, which is initialized at startup and persisted across container restarts. The path is configurable via `FLEET_VULNERABILITIES_DATABASES_PATH`.
+</Note>
+
+## Supporting internal and regulatory frameworks
+
+The combination of continuous policy enforcement, persistent audit logging, and automated reporting means NextAudit AI can support a range of compliance frameworks without custom tooling for each one. Whether your organization needs to demonstrate compliance with internal IT policy, industry standards, or regulatory requirements, the platform provides the evidence collection and traceability layer that auditors expect.
+
+## Related features
+
+<CardGroup cols={2}>
+  <Card title="Fleet management" icon="shield-check" href="/features/fleet-management">
+    How NextAudit AI collects device inventory and runs policy checks across enrolled endpoints.
+  </Card>
+  <Card title="Audit automation" icon="workflow" href="/features/audit-automation">
+    Automate compliance workflows, reporting, and remediation triggers using n8n.
+  </Card>
+</CardGroup>

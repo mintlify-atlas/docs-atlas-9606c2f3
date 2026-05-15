@@ -1,0 +1,101 @@
+---
+title: "n8n workflow automation for audit pipelines"
+description: "n8n orchestrates audit automation in NextAudit AI, connecting FleetDM data, Flowise AI analysis, and external systems through visual, event-driven workflows."
+keywords: ["n8n", "workflow", "automation", "audit", "pipeline", "orchestration"]
+---
+
+n8n is the automation backbone of NextAudit AI. It sits between the data sources — primarily FleetDM — and the AI analysis layer provided by Flowise, scheduling audit checks, routing alerts, and moving data across services without requiring custom integration code. Workflows are defined visually and stored in the persistent `n8n_data` volume, making them version-controllable and reproducible across environments.
+
+## Service configuration
+
+n8n runs from the official `docker.n8n.io/n8nio/n8n` image. The internal n8n port is always `5678`; the host-facing port is controlled by the `N8N_PORT` environment variable.
+
+```yaml
+n8n:
+  image: docker.n8n.io/n8nio/n8n
+  container_name: n8n
+  ports:
+    - "${N8N_PORT}:5678"
+  volumes:
+    - n8n_data:/home/node/.n8n
+  restart: unless-stopped
+```
+
+<Note>
+n8n has the same configuration across all three environments (dev, test, prod). Environment-specific behavior is controlled exclusively through the `.env` file values passed at startup.
+</Note>
+
+## Environment variables
+
+```yaml
+environment:
+  GENERIC_TIMEZONE: ${N8N_TIMEZONE}
+  TZ: ${N8N_TIMEZONE}
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+  N8N_RUNNERS_ENABLED: "true"
+```
+
+### Timezone
+
+`GENERIC_TIMEZONE` and `TZ` are both set to the same `N8N_TIMEZONE` value. n8n uses `GENERIC_TIMEZONE` for scheduling cron-based workflows; the OS-level `TZ` variable ensures that log timestamps and system calls inside the container reflect the same zone.
+
+### Credential file security
+
+`N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true` causes n8n to refuse to start if the settings file at `/home/node/.n8n/config` is readable by users other than the n8n process owner. This prevents credential leakage when the `n8n_data` volume is shared or inspected.
+
+<Warning>
+If you mount the `n8n_data` volume on a host path, verify that the directory permissions restrict access to root and the container user only. Misconfigured permissions will cause n8n to exit at startup when this setting is enabled.
+</Warning>
+
+### Workflow runners
+
+`N8N_RUNNERS_ENABLED=true` activates n8n's task runner architecture, which executes workflow nodes in isolated sub-processes rather than the main n8n event loop. This improves stability for CPU-intensive nodes and prevents a single long-running execution from blocking the entire workflow engine.
+
+## Volume
+
+```yaml
+volumes:
+  - n8n_data:/home/node/.n8n
+```
+
+The `n8n_data` volume persists all workflow definitions, credentials, execution history, and settings. Backing up this volume is sufficient to fully restore the n8n state.
+
+## Connecting to FleetDM and Flowise
+
+n8n does not have a direct compose dependency on FleetDM or Flowise, but it integrates with both over HTTP using the HTTP Request node or dedicated community nodes:
+
+<CardGroup cols={2}>
+  <Card title="FleetDM integration" icon="shield">
+    Poll the FleetDM REST API for host inventory, policy failures, and vulnerability findings. Use scheduled triggers to run checks at defined intervals and feed results into audit records.
+  </Card>
+  <Card title="Flowise integration" icon="brain">
+    Send structured audit data to Flowise AI flows via HTTP. Flowise returns natural language summaries or triage decisions that n8n routes to the appropriate downstream system.
+  </Card>
+</CardGroup>
+
+## Audit pipeline use cases
+
+<AccordionGroup>
+  <Accordion title="Scheduled audit checks">
+    Use a Cron node to trigger policy compliance checks on a schedule. The workflow queries the FleetDM API, evaluates the results against defined thresholds, and writes a structured audit record.
+  </Accordion>
+  <Accordion title="Alert routing">
+    When FleetDM reports a policy violation or critical vulnerability, an n8n workflow can classify the severity, look up the responsible team, and deliver a notification via the appropriate channel (email, Slack, webhook).
+  </Accordion>
+  <Accordion title="Cross-service data flows">
+    n8n can move audit findings from FleetDM into PostgreSQL for long-term storage, trigger Flowise analysis on new data, and synchronize results back to external ticketing or SIEM systems — all in a single workflow.
+  </Accordion>
+  <Accordion title="AI-assisted triage">
+    Pass raw osquery results or vulnerability lists to a Flowise flow for AI-assisted summarization or risk scoring. n8n handles the orchestration: it calls Flowise, waits for the response, and routes the enriched finding appropriately.
+  </Accordion>
+</AccordionGroup>
+
+## Accessing the n8n UI
+
+The n8n web interface is available at:
+
+```
+http://<host>:${N8N_PORT}
+```
+
+On first startup, n8n prompts you to create an owner account. All workflows, credentials, and settings are managed from this UI. To import existing workflows, use the **Import from file** option in the workflow editor or place workflow JSON files in the `n8n_data` volume before starting the container.

@@ -1,0 +1,222 @@
+---
+title: "Database services: PostgreSQL, MySQL, Redis"
+description: "NextAudit AI uses three purpose-built databases: PostgreSQL with pgvector for AI embeddings, MySQL for FleetDM state, and Redis for caching and session management."
+keywords: ["postgresql", "mysql", "redis", "pgvector", "embeddings", "database", "fleetdm"]
+---
+
+NextAudit AI's persistence layer is built around three databases, each serving a distinct role. PostgreSQL handles AI embedding storage and Flowise metadata using the pgvector extension. MySQL provides the relational backend that FleetDM requires for host inventory and policy state. Redis delivers the fast in-memory caching and session storage that FleetDM depends on for live queries and distributed coordination.
+
+## PostgreSQL — AI embeddings and Flowise
+
+PostgreSQL is a custom-built image that packages the `pgvector` extension alongside the standard PostgreSQL 14 runtime. The `EMBEDDING_SIZE` environment variable is passed into the container at startup and used to configure the vector column dimensions when the schema is initialized.
+
+### Image
+
+<Tabs>
+  <Tab title="Development">
+    In development, PostgreSQL is built from the local `./postgres` context, which applies the custom pgvector installation and any initialization scripts:
+
+    ```yaml
+    postgres:
+      build: ./postgres
+    ```
+  </Tab>
+  <Tab title="Production / Test">
+    In production and test environments, a pre-built versioned image is used, pinned by the `VERSION` variable:
+
+    ```yaml
+    postgres:
+      image: jjsotom2k4/postgres-ai:${VERSION}
+    ```
+  </Tab>
+</Tabs>
+
+### Full service definition
+
+```yaml
+postgres:
+  container_name: postgres
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    POSTGRES_DB: ${POSTGRES_DB}
+    EMBEDDING_SIZE: ${EMBEDDING_SIZE}
+  ports:
+    - "${POSTGRES_PORT}:5432"
+  volumes:
+    - postgres_data:/var/lib/postgresql/data
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+```
+
+### Environment variables
+
+| Variable | Description |
+| -------- | ----------- |
+| `POSTGRES_USER` | Superuser and application user created on first init |
+| `POSTGRES_PASSWORD` | Password for `POSTGRES_USER` |
+| `POSTGRES_DB` | Default database created on first init; used by both Flowise and pgvector |
+| `EMBEDDING_SIZE` | Vector dimension for pgvector columns — must match the embedding model configured in Flowise |
+
+### Health check
+
+The `pg_isready` command checks that PostgreSQL is accepting connections on the default port for the configured user and database. Flowise waits for this check to pass before starting.
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+  interval: 5s
+  timeout: 5s
+  retries: 10
+```
+
+### Volume
+
+```yaml
+volumes:
+  - postgres_data:/var/lib/postgresql/data
+```
+
+All database files are persisted in `postgres_data`. This includes both Flowise application tables and the pgvector embedding tables.
+
+<Warning>
+`EMBEDDING_SIZE` is consumed during schema initialization on first startup. Changing it after the database has been created requires dropping and recreating the vector columns or re-initializing the volume.
+</Warning>
+
+---
+
+## MySQL — FleetDM backend
+
+MySQL 8 is the relational backend for FleetDM. It stores all host records, enrolled agents, osquery packs, scheduled queries, policy definitions, results, and vulnerability findings. The `linux/x86_64` platform pin ensures compatibility with the FleetDM image's expected architecture.
+
+### Full service definition
+
+```yaml
+mysql:
+  image: mysql:8
+  platform: linux/x86_64
+  environment:
+    - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    - MYSQL_DATABASE=${MYSQL_DATABASE}
+    - MYSQL_USER=${MYSQL_USER}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+  ports:
+    - "3306:3306"
+  volumes:
+    - mysql:/var/lib/mysql
+  cap_add:
+    - SYS_NICE
+  restart: unless-stopped
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent || exit 1",
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+```
+
+### Environment variables
+
+| Variable | Description |
+| -------- | ----------- |
+| `MYSQL_ROOT_PASSWORD` | Root account password; required by the MySQL image |
+| `MYSQL_DATABASE` | Database created on first init; referenced by `FLEET_MYSQL_DATABASE` |
+| `MYSQL_USER` | Application user created on first init |
+| `MYSQL_PASSWORD` | Password for `MYSQL_USER`; used by FleetDM to connect |
+
+### Health check
+
+`mysqladmin ping` probes the MySQL server over TCP. Fleet waits for this check to succeed before running `fleet prepare db`.
+
+```yaml
+healthcheck:
+  test:
+    [
+      "CMD-SHELL",
+      "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent || exit 1",
+    ]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+```
+
+<Note>
+`cap_add: SYS_NICE` allows MySQL to use real-time scheduling priorities, which reduces latency jitter on busy hosts. This is standard practice for MySQL containers.
+</Note>
+
+### Volume
+
+```yaml
+volumes:
+  - mysql:/var/lib/mysql
+```
+
+---
+
+## Redis — FleetDM cache and sessions
+
+Redis 6 provides in-memory storage for FleetDM's distributed session management, live query fan-out, and inter-process state. Append-only file (AOF) persistence is enabled so the cache survives container restarts without full data loss.
+
+### Full service definition
+
+```yaml
+redis:
+  image: redis:6
+  command: ["redis-server", "--appendonly", "yes"]
+  ports:
+    - "6379:6379"
+  volumes:
+    - redis:/data
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+```
+
+### Append-only persistence
+
+The `--appendonly yes` flag passed to `redis-server` enables AOF persistence. Every write operation is logged to the AOF file in the `redis:/data` volume before the acknowledgment is sent to the client, ensuring data survives an unclean shutdown.
+
+### Health check
+
+`redis-cli ping` sends a `PING` command to the Redis server and expects a `PONG` response. Fleet waits for this check before starting.
+
+```yaml
+healthcheck:
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+```
+
+### Volume
+
+```yaml
+volumes:
+  - redis:/data
+```
+
+---
+
+## Summary
+
+<CardGroup cols={3}>
+  <Card title="PostgreSQL" icon="database">
+    AI embeddings, Flowise metadata, and pgvector similarity search. Custom image with configurable `EMBEDDING_SIZE`. Used by Flowise.
+  </Card>
+  <Card title="MySQL" icon="database">
+    FleetDM application state: hosts, policies, queries, and vulnerability results. Standard `mysql:8` image on `linux/x86_64`. Used by FleetDM.
+  </Card>
+  <Card title="Redis" icon="zap">
+    In-memory cache for FleetDM sessions and live query coordination. AOF persistence enabled. Used by FleetDM.
+  </Card>
+</CardGroup>

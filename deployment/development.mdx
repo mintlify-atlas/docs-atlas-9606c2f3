@@ -1,0 +1,109 @@
+---
+title: "Set up a development environment"
+description: "Run the full NextAudit AI stack locally with locally built Ollama and PostgreSQL images for rapid iteration and hands-on debugging."
+icon: "laptop-code"
+---
+
+The development environment is designed for engineers working on NextAudit AI itself. Ollama and PostgreSQL are built from local source directories instead of pulling pre-published images, so changes to the AI model configuration or database schema take effect immediately after a rebuild. All other services—Flowise, n8n, MySQL, Redis, and Fleet—use upstream images just as they do in production.
+
+<Warning>
+  Fleet requires TLS certificates at `src/ai-sentinel/certs/fleet.crt` and `src/ai-sentinel/certs/fleet.key`. The container will not start without them. Generate a self-signed pair for local use with `openssl req -x509 -newkey rsa:4096 -keyout fleet.key -out fleet.crt -days 365 -nodes`.
+</Warning>
+
+## Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/Kevin2523/nextAuditAi.git
+    ```
+  </Step>
+
+  <Step title="Enter the project directory">
+    ```bash
+    cd nextAuditAi
+    ```
+  </Step>
+
+  <Step title="Copy environment variables">
+    Copy the development example file and fill in the required values:
+
+    ```bash
+    cp src/ai-sentinel/dev.env.example src/ai-sentinel/.env
+    ```
+
+    <Note>
+      The `.env.example` template files are distributed on the `develop` branch. If you are working from `main`, create `src/ai-sentinel/.env` manually using the [Environment variables reference](/deployment/environment-variables).
+    </Note>
+
+    Open `src/ai-sentinel/.env` and set at minimum the variables listed in the [key variables](#key-environment-variables) section below.
+  </Step>
+
+  <Step title="Create the certs directory and add Fleet TLS certificates">
+    Fleet expects its certificate and key at paths mounted from `src/ai-sentinel/certs/`. Create the directory and place your certificate files there:
+
+    ```bash
+    mkdir -p src/ai-sentinel/certs
+    # Copy or generate fleet.crt and fleet.key into this directory
+    ```
+
+    For a self-signed certificate suitable for local development:
+
+    ```bash
+    openssl req -x509 -newkey rsa:4096 \
+      -keyout src/ai-sentinel/certs/fleet.key \
+      -out src/ai-sentinel/certs/fleet.crt \
+      -days 365 -nodes \
+      -subj "/CN=localhost"
+    ```
+  </Step>
+
+  <Step title="Start the stack">
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml up -d
+    ```
+
+    Docker Compose will build the `ollama` and `postgres` images from their local contexts on first run. Subsequent starts reuse the cached layers unless you pass `--build`.
+  </Step>
+
+  <Step title="Verify all services are running">
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml ps
+    ```
+
+    All services should show a `running` or `healthy` status. Fleet depends on MySQL, Redis, and `fleet-init` completing before it starts, so allow 30–60 seconds for the full stack to become ready.
+  </Step>
+</Steps>
+
+## Services and default ports
+
+The port each service listens on is controlled by environment variables so you can remap them in `.env` without editing the Compose file.
+
+| Service | Container port | Host port env var | Default internal port |
+|---|---|---|---|
+| Ollama | 11434 | `OLLAMA_PORT` | 11434 |
+| PostgreSQL | 5432 | `POSTGRES_PORT` | 5432 |
+| Flowise | `FLOWISE_PORT` | `FLOWISE_PORT` | — |
+| n8n | 5678 | `N8N_PORT` | 5678 |
+| MySQL | 3306 | _(hardcoded 3306)_ | 3306 |
+| Redis | 6379 | _(hardcoded 6379)_ | 6379 |
+| Fleet UI/API | `FLEET_SERVER_PORT` | `FLEET_SERVER_PORT` | — |
+
+## Key environment variables
+
+These variables must be set before starting the stack. Refer to [Environment variables reference](/deployment/environment-variables) for the full list.
+
+| Variable | Description |
+|---|---|
+| `FLEET_SERVER_PRIVATE_KEY` | Random 32-byte base64 secret. Generate with `openssl rand -base64 32`. |
+| `FLEET_SERVER_TLS` | Set to `true` to enable HTTPS on the Fleet API. |
+| `FLEET_SERVER_CERT` | Path inside the container to the Fleet TLS certificate (`/fleet/fleet.crt`). |
+| `FLEET_SERVER_KEY` | Path inside the container to the Fleet TLS key (`/fleet/fleet.key`). |
+| `MYSQL_ROOT_PASSWORD` | Root password for the MySQL instance used by Fleet. |
+| `MYSQL_PASSWORD` / `FLEET_MYSQL_PASSWORD` | Matching passwords for the Fleet MySQL user. |
+| `POSTGRES_PASSWORD` | Password for the PostgreSQL user shared by Flowise. |
+| `OLLAMA_MODELS` | Comma-separated list of models to load on startup. |
+
+<Note>
+  The `FLEET_REDIS_ADDRESS` and `FLEET_MYSQL_ADDRESS` values are hardcoded in the Compose file to `redis:6379` and `mysql:3306` respectively, using Docker's internal DNS. You do not need to set these in `.env`.
+</Note>

@@ -1,0 +1,136 @@
+---
+title: "Deploy NextAudit AI in production"
+description: "Run NextAudit AI in production using versioned images from the jjsotom2k4 registry with TLS-enabled Fleet and hardened environment settings."
+icon: "server"
+---
+
+Production deployments pull every service from pinned, registry-hosted images rather than building from source. The `docker-compose.prod.yml` file is structurally identical to `docker-compose.test.yml`, but it is intended for persistent, customer-facing infrastructure where image immutability, TLS enforcement, and secret hygiene are mandatory. Before you start, review the security callouts in this guide carefully.
+
+<Warning>
+  Never reuse development credentials in production. Generate new values for `FLEET_SERVER_PRIVATE_KEY`, `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, and `POSTGRES_PASSWORD` before deploying.
+</Warning>
+
+## Prerequisites
+
+- Docker 24.0 or later with the Compose v2 plugin
+- Access to the `jjsotom2k4/` image registry
+- A valid `VERSION` tag for the release you are deploying
+- TLS certificate and private key for the Fleet server
+- A FleetDM license key (required for premium features)
+
+## Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/Kevin2523/nextAuditAi.git
+    cd nextAuditAi
+    ```
+  </Step>
+
+  <Step title="Copy and configure the production environment file">
+    ```bash
+    cp src/ai-sentinel/prod.env.example src/ai-sentinel/.env
+    ```
+
+    Open `src/ai-sentinel/.env` and set the `VERSION` variable to the image tag you want to deploy. This value pins both `jjsotom2k4/ollama-ai` and `jjsotom2k4/postgres-ai` to the same release:
+
+    ```bash
+    VERSION=1.2.0
+    ```
+  </Step>
+
+  <Step title="Generate the Fleet server private key">
+    Fleet requires a random base64-encoded 32-byte secret. Generate one and add it to `.env`:
+
+    ```bash
+    openssl rand -base64 32
+    ```
+
+    <Warning>
+      Store the output in a secrets manager (Vault, AWS Secrets Manager, etc.). Do not commit this value to version control.
+    </Warning>
+  </Step>
+
+  <Step title="Place TLS certificates for Fleet">
+    Fleet's Compose configuration mounts certificates from `src/ai-sentinel/certs/`. Place your CA-signed certificate and key there:
+
+    ```bash
+    mkdir -p src/ai-sentinel/certs
+    cp /path/to/your/fleet.crt src/ai-sentinel/certs/fleet.crt
+    cp /path/to/your/fleet.key src/ai-sentinel/certs/fleet.key
+    ```
+
+    Then set the corresponding environment variables in `.env`:
+
+    ```bash
+    FLEET_SERVER_TLS=true
+    FLEET_SERVER_CERT=/fleet/fleet.crt
+    FLEET_SERVER_KEY=/fleet/fleet.key
+    ```
+
+    <Warning>
+      The paths above (`/fleet/fleet.crt`, `/fleet/fleet.key`) are the container-internal paths defined in the Compose volume mount. Do not use the host paths here.
+    </Warning>
+  </Step>
+
+  <Step title="Set your Fleet license key">
+    ```bash
+    FLEET_LICENSE_KEY=your-fleet-license-key
+    ```
+
+    <Warning>
+      The license key enables premium FleetDM features. Keep it confidential and rotate it if it is ever exposed.
+    </Warning>
+  </Step>
+
+  <Step title="Start the production stack">
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.prod.yml up -d
+    ```
+  </Step>
+
+  <Step title="Verify services are healthy">
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.prod.yml ps
+    ```
+
+    Wait for all services to reach `running (healthy)` status. Fleet, MySQL, and Redis have health checks configured with up to 12 retries each.
+  </Step>
+</Steps>
+
+## Key differences from development
+
+| Aspect | Development | Production |
+|---|---|---|
+| Ollama image | Built from `./ollama` context | `jjsotom2k4/ollama-ai:${VERSION}` |
+| PostgreSQL image | Built from `./postgres` context | `jjsotom2k4/postgres-ai:${VERSION}` |
+| `VERSION` variable | Not required | Required |
+| TLS | Optional (self-signed acceptable) | Required (CA-signed certificate) |
+| Secrets | Can use placeholder values | Must use strong, unique secrets |
+
+## Health check endpoints
+
+All three stateful services expose health checks that Docker monitors automatically. You can also query Fleet directly:
+
+```bash
+# Fleet health endpoint (replace 8080 with your FLEET_SERVER_PORT)
+curl -k https://localhost:8080/healthz
+```
+
+A healthy Fleet instance returns HTTP 200. MySQL and Redis health is checked internally by the Compose dependency chain before Fleet starts.
+
+## Production-specific environment variables
+
+The following variables have particular security implications in production. See [Environment variables reference](/deployment/environment-variables) for descriptions of every variable.
+
+| Variable | Notes |
+|---|---|
+| `VERSION` | Required. Pins Ollama and PostgreSQL to a specific registry release. |
+| `FLEET_SERVER_TLS` | Set to `true`. Disabling TLS in production exposes the Fleet API over plain HTTP. |
+| `FLEET_SERVER_CERT` | Container path to the CA-signed TLS certificate. |
+| `FLEET_SERVER_KEY` | Container path to the TLS private key. |
+| `FLEET_SERVER_PRIVATE_KEY` | Generate with `openssl rand -base64 32`. Rotate on any suspected exposure. |
+| `FLEET_LICENSE_KEY` | Your FleetDM license. Required for premium features. |
+| `FLEET_SESSION_DURATION` | Controls how long authenticated sessions remain valid. |
+| `FLEET_VULNERABILITIES_PERIODICITY` | How often Fleet scans for vulnerabilities in the enrolled fleet. |

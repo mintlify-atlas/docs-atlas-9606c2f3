@@ -1,0 +1,102 @@
+---
+title: "Ollama: self-hosted LLM inference"
+description: "Ollama provides private, self-hosted LLM inference in NextAudit AI, serving language models to Flowise over a local API without sending data to external providers."
+keywords: ["ollama", "LLM", "inference", "self-hosted", "private AI", "models"]
+---
+
+Ollama is the inference engine that powers the AI layer of NextAudit AI. It serves large language models through a local HTTP API, meaning all inference requests from Flowise stay within the stack's network boundary. No prompts, audit findings, or host data are transmitted to external AI providers.
+
+## Image and build
+
+The Ollama service uses different sources depending on the environment:
+
+<Tabs>
+  <Tab title="Development">
+    In development, Ollama is built from a local `./ollama` context. This lets you customize the image — for example, to pre-bake specific models or apply configuration changes — and rebuild quickly without pulling from a registry.
+
+    ```yaml
+    ollama:
+      build:
+        context: ./ollama
+      container_name: ollama
+    ```
+  </Tab>
+  <Tab title="Production / Test">
+    In production and test environments, Ollama pulls a versioned image from the `jjsotom2k4/ollama-ai` repository. The `VERSION` environment variable pins the image tag, ensuring reproducible deployments.
+
+    ```yaml
+    ollama:
+      image: jjsotom2k4/ollama-ai:${VERSION}
+      container_name: ollama
+    ```
+  </Tab>
+</Tabs>
+
+## Service configuration
+
+The full service definition (shown here for prod/test) exposes the Ollama API on `OLLAMA_PORT` on the host, mapping to the fixed internal port `11434`:
+
+```yaml
+ollama:
+  image: jjsotom2k4/ollama-ai:${VERSION}
+  container_name: ollama
+  environment:
+    OLLAMA_MODELS: ${OLLAMA_MODELS}
+  ports:
+    - "${OLLAMA_PORT}:11434"
+  volumes:
+    - ollama_data:/root/.ollama
+  restart: unless-stopped
+```
+
+## Environment variables
+
+### OLLAMA_MODELS
+
+```yaml
+environment:
+  OLLAMA_MODELS: ${OLLAMA_MODELS}
+```
+
+`OLLAMA_MODELS` specifies which models Ollama pre-loads when the container starts. Set this to a comma-separated list of model names (using Ollama's model tag syntax, e.g. `llama3.2,nomic-embed-text`). Pre-loading avoids the latency of on-demand pulls when Flowise first requests inference.
+
+<Tip>
+Include both a chat model and an embedding model in `OLLAMA_MODELS` if you plan to use Flowise's vector store features. The embedding model dimension must match the `EMBEDDING_SIZE` set on the PostgreSQL service.
+</Tip>
+
+### VERSION
+
+The `VERSION` variable is used in the prod and test compose files to pin the `jjsotom2k4/ollama-ai` image tag:
+
+```yaml
+image: jjsotom2k4/ollama-ai:${VERSION}
+```
+
+Set `VERSION` in your environment file (`prod.env`, `test.env`) to control which image revision is deployed. This ensures that infrastructure updates are explicit and auditable.
+
+## Volume
+
+```yaml
+volumes:
+  - ollama_data:/root/.ollama
+```
+
+The `ollama_data` volume stores downloaded model weights. Models can be several gigabytes each; persisting this volume prevents re-downloading on container restart.
+
+## Internal API for Flowise
+
+Ollama listens on port `11434` inside the container. Flowise connects to it using the Docker service hostname:
+
+```
+http://ollama:11434
+```
+
+This connection never leaves the Docker network. To configure it in Flowise, add an **Ollama** chat model or embeddings node and set the base URL to `http://ollama:11434`.
+
+<Info>
+The host-facing `OLLAMA_PORT` is available for direct API calls during development (e.g., testing a model with `curl`), but production traffic between Flowise and Ollama uses the internal Docker network exclusively.
+</Info>
+
+## Privacy and data isolation
+
+Because Ollama runs inside the same Docker Compose stack as the rest of NextAudit AI, inference requests never leave the host. Audit findings, osquery results, policy data, and host metadata processed by AI flows remain within the infrastructure boundary defined by the stack. This is particularly relevant for deployments subject to data residency or confidentiality requirements.

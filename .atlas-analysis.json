@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "NextAudit AI",
+  "projectType": "saas",
+  "projectName": "NextAudit AI",
+  "projectDescription": "An intelligent SaaS audit platform for fleets and endpoints that combines AI-assisted analysis with automated workflows for real-time observability, policy compliance, and traceability.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#1E3A5F",
-    "light": "#2E5FA3",
-    "dark": "#0D1F33"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/Kevin2523/nextAuditAi"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/Kevin2523/nextAuditAi"
-    }
-  },
+  "primaryColor": "#1E3A5F",
+  "lightColor": "#2E5FA3",
+  "darkColor": "#0D1F33",
   "navigation": {
     "tabs": [
       {
@@ -70,5 +58,23 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Real-time fleet endpoint visibility and inventory via FleetDM",
+    "Automated audit workflows powered by n8n orchestration",
+    "AI-assisted analysis and operational assistance via Flowise and Ollama",
+    "Policy-based automated auditing for internal and regulatory compliance",
+    "Multi-environment Docker Compose deployment (dev, test, prod)",
+    "Persistent vector storage with pgvector-enabled PostgreSQL for AI embeddings",
+    "Vulnerability scanning and tracking for endpoint fleet"
+  ],
+  "publicApiSurface": [
+    "FleetDM API (fleet service, port FLEET_SERVER_PORT)",
+    "Flowise AI API (port FLOWISE_PORT)",
+    "n8n Workflow API (port N8N_PORT)",
+    "Ollama LLM API (port OLLAMA_PORT, proxied on 11434)",
+    "docker-compose.dev.yml — development stack",
+    "docker-compose.test.yml — test stack",
+    "docker-compose.prod.yml — production stack"
+  ]
 }

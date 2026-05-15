@@ -1,0 +1,80 @@
+---
+title: "AI-assisted audit analysis and insights"
+description: "Turn raw fleet telemetry into actionable audit insights using a fully self-hosted AI stack — no data leaves your infrastructure."
+keywords: ["AI analysis", "Flowise", "Ollama", "pgvector", "semantic search", "private AI", "fleet insights", "audit intelligence"]
+---
+
+Raw fleet data — device inventories, policy results, vulnerability counts — only becomes useful when you can ask questions of it and get clear answers. NextAudit AI embeds a fully self-hosted AI stack that lets your security and IT teams query fleet telemetry in natural language, surface patterns across thousands of devices, and generate audit-ready summaries, all without sending a single byte to an external AI provider.
+
+## How the AI stack is structured
+
+The AI layer in NextAudit AI is composed of three coordinated services:
+
+- **Ollama** — runs large language models locally on your own hardware
+- **Flowise** — provides a visual AI agent builder for constructing analysis workflows
+- **PostgreSQL with pgvector** — stores vector embeddings for semantic search over historical fleet data
+
+These services are wired together so that Flowise agents can call Ollama for inference and query the vector store for context retrieval, all within your network perimeter.
+
+<Info>
+  Because Ollama runs inference locally, you choose which model is loaded via the `OLLAMA_MODELS` environment variable. This means you can select a model sized appropriately for your hardware — from lightweight models on a single server to larger models on GPU-equipped infrastructure.
+</Info>
+
+## Flowise AI agent flows
+
+Flowise is the orchestration layer where you build and run AI-assisted analysis workflows. Using its visual interface, operators can construct agent flows that:
+
+- Accept a natural-language question about fleet state
+- Retrieve relevant device records and policy results from the database
+- Call the Ollama LLM to reason over that context
+- Return a structured, human-readable answer
+
+Typical questions an operator might pose through a Flowise agent flow include:
+
+- "Which endpoints are missing critical patches from the last 30 days?"
+- "Summarize the current compliance posture across the Windows fleet."
+- "Which devices have failed more than three consecutive policy checks?"
+- "Generate an executive summary of vulnerability exposure for this week's audit."
+
+<Tip>
+  Flowise persists its agent flow definitions in PostgreSQL, so your analysis workflows are version-tracked alongside your other operational data and survive container restarts.
+</Tip>
+
+## Ollama local LLM inference
+
+Ollama provides the inference runtime — it loads and serves LLM models from local storage and exposes them via a standard API that Flowise queries at analysis time. Because inference is local, response latency depends on your hardware rather than external API availability, and there are no per-token usage costs or rate limits imposed by a third party.
+
+The Ollama service persists downloaded models in a dedicated volume (`ollama_data`), so models are downloaded once and reused across restarts without re-fetching.
+
+<Note>
+  Ollama supports a range of open-weight models. The specific models available to your deployment are configured via `OLLAMA_MODELS`. Consult the Ollama documentation for the current list of supported models and their hardware requirements.
+</Note>
+
+## pgvector-enabled semantic search
+
+NextAudit AI uses a PostgreSQL instance with the pgvector extension enabled. The `EMBEDDING_SIZE` configuration controls the dimensionality of the vector embeddings stored in the database. This setup enables Flowise agents to perform semantic similarity searches over historical fleet data — finding devices, events, or audit records that are conceptually related to a query even when they don't share exact keyword matches.
+
+In practice, semantic search allows agents to:
+
+- Find fleet events that are contextually similar to a described incident
+- Retrieve past audit findings relevant to a current investigation
+- Surface related compliance failures across different policy categories
+
+## Privacy and data residency
+
+Every component in the AI stack runs within your own infrastructure. Ollama inference, Flowise agent execution, and vector storage all operate on-premises. Fleet telemetry, audit findings, and the questions you ask of your data never leave your environment.
+
+<Info>
+  This architecture is particularly important for organizations with regulatory data residency requirements or internal policies that prohibit sending device inventory or vulnerability data to external cloud services.
+</Info>
+
+## Related services
+
+<CardGroup cols={2}>
+  <Card title="Flowise AI service" icon="brain" href="/services/flowise-ai">
+    Service configuration for Flowise, including database connection and port settings.
+  </Card>
+  <Card title="Ollama service" icon="cpu" href="/services/ollama">
+    Service configuration for Ollama local LLM inference and model management.
+  </Card>
+</CardGroup>

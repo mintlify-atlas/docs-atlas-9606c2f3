@@ -1,0 +1,187 @@
+---
+title: "Troubleshoot common NextAudit AI issues"
+description: "Diagnose and resolve the most frequent startup failures, connectivity errors, and container restart loops in the NextAudit AI stack."
+---
+
+When something goes wrong in the NextAudit AI stack, the fastest path to resolution is to read the right log at the right layer. Most failures fall into one of three categories: a dependency that has not yet passed its health check, a misconfigured environment variable, or a platform-level compatibility issue. Start with `docker compose ps` to see which containers are unhealthy, then use `docker compose logs [service]` to read the specific error. The FAQ below covers the most common scenarios and what to check for each.
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Fleet fails to start">
+    Fleet requires both `mysql` and `redis` to be healthy before it launches. The `depends_on` conditions enforce this:
+
+    ```yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      fleet-init:
+        condition: service_completed_successfully
+    ```
+
+    If Fleet is stuck in a restart loop or never reaches `healthy`, check the dependency services first:
+
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml logs mysql
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml logs redis
+    ```
+
+    MySQL is configured with `retries: 12` at a 10-second interval, giving it up to 120 seconds to become healthy. If MySQL has not passed its health check after that window, inspect the MySQL logs for authentication errors or storage permission issues.
+
+    <Note>
+    Fleet also runs `fleet prepare db --no-prompt` before starting the server. If the MySQL database schema migration fails, Fleet will exit immediately. Look for migration errors in `docker compose logs fleet`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Flowise can't connect to PostgreSQL">
+    Flowise waits for PostgreSQL to pass its health check before starting (`condition: service_healthy`). PostgreSQL is configured with `retries: 10` at a 5-second interval — up to 50 seconds of startup time.
+
+    If Flowise reports a database connection error after PostgreSQL is healthy, verify the environment variables are consistent:
+
+    ```yaml
+    # PostgreSQL service
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_DB: ${POSTGRES_DB}
+
+    # Flowise service
+    DATABASE_USER: ${POSTGRES_USER}
+    DATABASE_NAME: ${POSTGRES_DB}
+    DATABASE_HOST: postgres
+    DATABASE_PORT: 5432
+    ```
+
+    The `DATABASE_HOST` must be `postgres` (the service name), not `localhost` or an IP address. Docker Compose resolves service names within the shared network.
+
+    <Warning>
+    If `POSTGRES_USER` or `POSTGRES_DB` differ between the PostgreSQL and Flowise service definitions, the connection will be refused even when the database is healthy. Double-check that both blocks reference the same variable names.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Services restart repeatedly">
+    All services in the stack are configured with `restart: unless-stopped`. This means Docker will restart any container that exits with a non-zero code, indefinitely, until you stop it manually.
+
+    A container that restarts in a tight loop usually has a configuration error rather than a transient fault. Check the logs for the most recent exit reason:
+
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml logs --tail=50 [service-name]
+    ```
+
+    Common causes include:
+    - A required environment variable is empty or set to an invalid value
+    - A volume mount path does not exist or has wrong permissions
+    - A dependency service is unhealthy and the startup command fails
+
+    <Tip>
+    Use `docker compose -f src/ai-sentinel/docker-compose.dev.yml ps` to see the restart count and current status for all containers. A high restart count for a single service points to that service's configuration.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Fleet init container exits immediately">
+    The `fleet-init` container exiting immediately is expected behavior. Its sole purpose is to set ownership on the shared volumes before Fleet starts:
+
+    ```yaml
+    fleet-init:
+      image: alpine:latest
+      command: sh -c "chown -R 100:101 /logs /data /vulndb"
+    ```
+
+    Fleet declares the dependency as `condition: service_completed_successfully`, which means Fleet waits for `fleet-init` to exit with code 0 — not to remain running. Once the `chown` command finishes, `fleet-init` exits cleanly and Fleet proceeds with startup.
+
+    <Note>
+    If Fleet is stuck waiting for `fleet-init`, check whether the `logs`, `data`, and `vulndb` Docker volumes were created successfully. Run `docker volume ls` to confirm they exist.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Ollama fails to load models">
+    Ollama reads the list of models to pre-load from the `OLLAMA_MODELS` environment variable. If the variable is empty or points to a model name that does not exist in the registry, Ollama may start but fail to load any models.
+
+    ```yaml
+    environment:
+      OLLAMA_MODELS: ${OLLAMA_MODELS}
+    ```
+
+    Model data is persisted in the `ollama_data` volume mounted at `/root/.ollama`. If the volume is present but empty, Ollama needs to download the models on first run — this can take several minutes depending on model size and network speed.
+
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml logs ollama
+    ```
+
+    <Tip>
+    Check the Ollama logs for download progress. A slow first start with lines like `pulling manifest` and `downloading` is normal. An immediate error about an unknown model name means `OLLAMA_MODELS` contains a typo or an unsupported model identifier.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="n8n workflows not running">
+    Workflow execution in n8n requires the task runners feature to be enabled. All compose environments set this explicitly:
+
+    ```yaml
+    environment:
+      N8N_RUNNERS_ENABLED: "true"
+    ```
+
+    If this variable is missing or set to `false`, workflow nodes will appear to trigger but no execution will actually occur. Verify the setting and restart the n8n container:
+
+    ```bash
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml logs n8n
+    docker compose -f src/ai-sentinel/docker-compose.dev.yml restart n8n
+    ```
+
+    Also confirm that workflow automation is active inside the n8n UI — paused workflows will not execute regardless of the runner setting.
+
+    <Note>
+    n8n persists workflow definitions and execution history in the `n8n_data` volume at `/home/node/.n8n`. If this volume is lost or recreated, all workflows will need to be re-imported.
+    </Note>
+  </Accordion>
+
+  <Accordion title="MySQL platform warning on ARM Macs">
+    Both `mysql` and `fleet` specify `platform: linux/x86_64`:
+
+    ```yaml
+    mysql:
+      image: mysql:8
+      platform: linux/x86_64
+
+    fleet:
+      image: fleetdm/fleet
+      platform: linux/x86_64
+    ```
+
+    On Apple Silicon (M1/M2/M3) Macs, Docker Desktop will run these containers under Rosetta 2 emulation and emit a warning:
+
+    ```
+    WARNING: The requested image's platform (linux/amd64) does not match the detected host platform (linux/arm64/v8)
+    ```
+
+    This is expected. Both images function correctly under emulation, but you may notice slower startup times and slightly higher CPU usage compared to native ARM images.
+
+    <Warning>
+    Do not remove the `platform: linux/x86_64` directives on ARM hardware. MySQL 8 and the official FleetDM image do not currently publish ARM-native images; removing the platform override can result in container startup failures on some Docker versions.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Diagnostic commands
+
+Use these commands to investigate any service in the stack. Replace `[service-name]` with the service you want to inspect (e.g., `fleet`, `mysql`, `redis`, `postgres`, `flowise`, `n8n`, `ollama`).
+
+<CodeGroup>
+
+```bash Check all service status
+docker compose -f src/ai-sentinel/docker-compose.dev.yml ps
+```
+
+```bash View logs for a service
+docker compose -f src/ai-sentinel/docker-compose.dev.yml logs [service-name]
+```
+
+```bash Follow Fleet logs live
+docker compose -f src/ai-sentinel/docker-compose.dev.yml logs -f fleet
+```
+
+```bash Restart a service
+docker compose -f src/ai-sentinel/docker-compose.dev.yml restart [service]
+```
+
+</CodeGroup>

@@ -1,0 +1,70 @@
+---
+title: "Deploy NextAudit AI with Docker Compose"
+description: "Choose from three Docker Compose environments—development, test, and production—to deploy the full NextAudit AI microservices stack."
+icon: "docker"
+---
+
+NextAudit AI ships three Docker Compose files, each tuned to a different stage of the software lifecycle. All three start the same set of services—Ollama, PostgreSQL, Flowise, n8n, MySQL, Redis, and Fleet—but they differ in how images are sourced and how strictly they mirror a production-grade configuration.
+
+## Environments at a glance
+
+| Compose file | Image source | Intended use |
+|---|---|---|
+| `docker-compose.dev.yml` | Local `build:` context for Ollama and PostgreSQL | Active development and local iteration |
+| `docker-compose.test.yml` | Versioned images from `jjsotom2k4/` registry | Integration testing against a fixed image set |
+| `docker-compose.prod.yml` | Versioned images from `jjsotom2k4/` registry | Production deployments |
+
+### Development vs. test and production
+
+The key architectural difference between environments is how the Ollama and PostgreSQL containers are created.
+
+**Development** (`docker-compose.dev.yml`) uses `build:` directives that compile images from the local source tree:
+
+```yaml
+ollama:
+  build:
+    context: ./ollama
+
+postgres:
+  build: ./postgres
+```
+
+This lets you iterate on the AI model configuration and database schema without publishing new images.
+
+**Test and production** (`docker-compose.test.yml`, `docker-compose.prod.yml`) pull versioned images from the `jjsotom2k4/` registry. Both files are structurally identical—the distinction is operational (test environments are ephemeral; production environments are persistent).
+
+```yaml
+ollama:
+  image: jjsotom2k4/ollama-ai:${VERSION}
+
+postgres:
+  image: jjsotom2k4/postgres-ai:${VERSION}
+```
+
+The `VERSION` environment variable pins every deployment to a specific, reproducible release.
+
+## Prerequisites
+
+Before starting any environment you need:
+
+- **Docker** 24.0 or later
+- **Docker Compose** v2 (the `docker compose` plugin, not the legacy `docker-compose` binary)
+
+## Branch structure
+
+The repository uses three long-lived branches that map to the environments above:
+
+- **`main`** — stable baseline: README, `.gitignore`, and the core Compose files.
+- **`develop`** — active development branch where new features land first.
+- **`docs`** — technical documentation, manuals, and operational guides.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Development environment" icon="laptop-code" href="/deployment/development">
+    Run the full stack locally with hot-buildable images.
+  </Card>
+  <Card title="Production deployment" icon="server" href="/deployment/production">
+    Deploy with versioned images and production-hardened settings.
+  </Card>
+</CardGroup>

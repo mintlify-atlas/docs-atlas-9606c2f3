@@ -1,0 +1,128 @@
+---
+title: "Environment variables reference"
+description: "Complete reference for all environment variables used across the NextAudit AI development, test, and production Docker Compose configurations."
+icon: "sliders"
+---
+
+All three Docker Compose files—`docker-compose.dev.yml`, `docker-compose.test.yml`, and `docker-compose.prod.yml`—read their configuration from an `.env` file in the project root. Copy the appropriate example file (`dev.env.example`, `test.env.example`, or `prod.env.example`) before starting a stack. Variables shared across all environments behave identically; the only behavioral difference is that `VERSION` is only consumed by test and production, where Ollama and PostgreSQL are pulled as versioned registry images rather than built locally.
+
+The sections below document every variable, organized by service. Variables marked **required** must be set before the stack will start successfully.
+
+---
+
+## Ollama
+
+Ollama provides the local large-language-model inference layer used by Flowise and n8n workflows.
+
+| Variable | Required | Description |
+|---|---|---|
+| `OLLAMA_MODELS` | Required | Comma-separated list of model names to load on startup (e.g. `llama3,nomic-embed-text`). |
+| `OLLAMA_PORT` | Required | Host port mapped to Ollama's internal port 11434. |
+| `VERSION` | Required (test/prod only) | Registry tag for `jjsotom2k4/ollama-ai`. Not used in development, where the image is built locally. |
+
+---
+
+## PostgreSQL
+
+PostgreSQL stores Flowise flow definitions, vector embeddings, and operational metadata.
+
+| Variable | Required | Description |
+|---|---|---|
+| `POSTGRES_USER` | Required | Database superuser name. Used by both the PostgreSQL container and Flowise. |
+| `POSTGRES_PASSWORD` | Required | Password for `POSTGRES_USER`. |
+| `POSTGRES_DB` | Required | Name of the default database created on initialization. |
+| `POSTGRES_PORT` | Required | Host port mapped to PostgreSQL's internal port 5432. |
+| `EMBEDDING_SIZE` | Required | Dimension of vector embeddings stored in the database (e.g. `768` or `1536`). Must match the embedding model configured in Ollama. |
+| `DATABASE_SCHEMA` | Optional | PostgreSQL schema name used by Flowise. Defaults to `public` if not set. |
+| `VERSION` | Required (test/prod only) | Registry tag for `jjsotom2k4/postgres-ai`. Not used in development. |
+
+---
+
+## Flowise
+
+Flowise provides the visual AI workflow builder that connects to Ollama and PostgreSQL.
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLOWISE_PORT` | Required | Host and container port for the Flowise web interface. Used on both sides of the port mapping. |
+| `DATABASE_SCHEMA` | Optional | PostgreSQL schema where Flowise stores its tables. Shared with the PostgreSQL `DATABASE_SCHEMA` variable. |
+
+<Note>
+  Flowise also consumes `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` directly from the Compose environment. You do not need to duplicate those values.
+</Note>
+
+---
+
+## n8n
+
+n8n orchestrates audit automation workflows and integrations between NextAudit AI services.
+
+| Variable | Required | Description |
+|---|---|---|
+| `N8N_PORT` | Required | Host port mapped to n8n's internal port 5678. |
+| `N8N_TIMEZONE` | Required | IANA timezone string (e.g. `America/New_York`, `Europe/Madrid`). Sets both `GENERIC_TIMEZONE` and `TZ` inside the container. |
+
+---
+
+## MySQL
+
+MySQL is the relational database backend for FleetDM. It is based on the official Fleet Docker Compose configuration.
+
+| Variable | Required | Description |
+|---|---|---|
+| `MYSQL_ROOT_PASSWORD` | Required | Root password for the MySQL instance. Not used by Fleet directly, but required by the MySQL image. |
+| `MYSQL_DATABASE` | Required | Name of the database Fleet uses. Also referenced by `FLEET_MYSQL_DATABASE`. |
+| `MYSQL_USER` | Required | MySQL user Fleet authenticates as. Also referenced by `FLEET_MYSQL_USERNAME`. |
+| `MYSQL_PASSWORD` | Required | Password for `MYSQL_USER`. Must match `FLEET_MYSQL_PASSWORD`. |
+
+---
+
+## Fleet
+
+Fleet (FleetDM) provides endpoint inventory, posture management, and osquery-based telemetry. The variables below configure the Fleet server process. Internal service addresses (`FLEET_REDIS_ADDRESS`, `FLEET_MYSQL_ADDRESS`) are hardcoded in the Compose file to Docker's internal DNS names and do not need to be set in `.env`.
+
+### Networking
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLEET_SERVER_ADDRESS` | Required | The bind address for Fleet's HTTP listener (e.g. `0.0.0.0`). Combined with `FLEET_SERVER_PORT` inside the Compose file. |
+| `FLEET_SERVER_PORT` | Required | Port Fleet listens on and exposes to the host. Used on both sides of the port mapping. |
+| `FLEET_REDIS_ADDRESS` | — | Hardcoded in Compose to `redis:6379`. Do not override unless changing the Redis service name. |
+| `FLEET_MYSQL_ADDRESS` | — | Hardcoded in Compose to `mysql:3306`. Do not override unless changing the MySQL service name. |
+| `FLEET_MYSQL_DATABASE` | Required | Must match `MYSQL_DATABASE`. |
+| `FLEET_MYSQL_USERNAME` | Required | Must match `MYSQL_USER`. |
+| `FLEET_MYSQL_PASSWORD` | Required | Must match `MYSQL_PASSWORD`. |
+
+### TLS
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLEET_SERVER_TLS` | Required | Set to `true` to enable HTTPS. Set to `false` only in isolated local environments. |
+| `FLEET_SERVER_CERT` | Conditional | Container-internal path to the TLS certificate file. Required when `FLEET_SERVER_TLS=true`. Example: `/fleet/fleet.crt`. |
+| `FLEET_SERVER_KEY` | Conditional | Container-internal path to the TLS private key file. Required when `FLEET_SERVER_TLS=true`. Example: `/fleet/fleet.key`. |
+
+### Secrets and licensing
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLEET_SERVER_PRIVATE_KEY` | Required | Random 32-byte base64 string used for internal Fleet cryptography. Generate with `openssl rand -base64 32`. |
+| `FLEET_LICENSE_KEY` | Optional | FleetDM license key. Required to enable premium features. Leave empty to run in free mode. |
+
+### Session and logging
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLEET_SESSION_DURATION` | Optional | Duration string for authenticated session validity (e.g. `24h`, `7d`). |
+| `FLEET_LOGGING_JSON` | Optional | Set to `true` to emit structured JSON logs. Recommended in production for log aggregation. |
+| `FLEET_OSQUERY_STATUS_LOG_PLUGIN` | Optional | Plugin used for osquery status logs. Set to `filesystem` to write logs to disk. |
+| `FLEET_FILESYSTEM_STATUS_LOG_FILE` | Conditional | Absolute path inside the container for status log output. Required when `FLEET_OSQUERY_STATUS_LOG_PLUGIN=filesystem`. |
+| `FLEET_FILESYSTEM_RESULT_LOG_FILE` | Conditional | Absolute path inside the container for result log output. Required when `FLEET_OSQUERY_STATUS_LOG_PLUGIN=filesystem`. |
+
+### Osquery and vulnerabilities
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLEET_OSQUERY_LABEL_UPDATE_INTERVAL` | Optional | How often Fleet refreshes dynamic labels on enrolled hosts (e.g. `30s`, `5m`). |
+| `FLEET_VULNERABILITIES_CURRENT_INSTANCE_CHECKS` | Optional | Set to `auto` to run vulnerability checks on this instance. |
+| `FLEET_VULNERABILITIES_DATABASES_PATH` | Optional | Container path where Fleet stores downloaded vulnerability databases. Backed by the `vulndb` volume. |
+| `FLEET_VULNERABILITIES_PERIODICITY` | Optional | How often Fleet runs vulnerability scans (e.g. `1h`, `24h`). |

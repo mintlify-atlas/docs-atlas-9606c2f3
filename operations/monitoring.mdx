@@ -1,0 +1,165 @@
+---
+title: "Monitor the NextAudit AI stack"
+description: "Track service health, inspect structured logs, and observe vulnerability scan activity across every service in the NextAudit AI Docker Compose stack."
+---
+
+An audit platform is only as trustworthy as its own operational health. When FleetDM stops reporting, osquery results go silent, or a vulnerability scan skips its scheduled run, teams lose the continuous visibility that compliance workflows depend on. This page explains how to verify that every service in the NextAudit AI stack is running correctly, where logs are written, and how to observe ongoing vulnerability scan activity — so that gaps in coverage are caught before they become audit findings.
+
+## Built-in health checks
+
+Every stateful service in the stack declares a Docker health check. Docker evaluates each check on a fixed interval and marks the container `healthy`, `unhealthy`, or `starting`. Services that depend on each other (for example, `fleet` depends on `mysql` and `redis`) will not start until their dependencies are `healthy`.
+
+### Fleet
+
+Fleet exposes a dedicated `/healthz` endpoint that returns HTTP 200 when the server is ready.
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${FLEET_SERVER_PORT}/healthz"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+```
+
+| Parameter  | Value |
+| ---------- | ----- |
+| `interval` | 10 s  |
+| `timeout`  | 5 s   |
+| `retries`  | 12    |
+
+### PostgreSQL
+
+PostgreSQL uses `pg_isready` to verify the database accepts connections for the configured user and database name.
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+  interval: 5s
+  timeout: 5s
+  retries: 10
+```
+
+| Parameter  | Value |
+| ---------- | ----- |
+| `interval` | 5 s   |
+| `timeout`  | 5 s   |
+| `retries`  | 10    |
+
+<Tip>
+PostgreSQL uses a shorter interval (5 s) than the other services because Flowise blocks on the `service_healthy` condition — a faster check reduces startup latency for the AI layer.
+</Tip>
+
+### MySQL
+
+MySQL is checked with `mysqladmin ping`, which authenticates with the runtime user credentials.
+
+```yaml
+healthcheck:
+  test:
+    [
+      "CMD-SHELL",
+      "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent || exit 1"
+    ]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+```
+
+| Parameter  | Value |
+| ---------- | ----- |
+| `interval` | 10 s  |
+| `timeout`  | 5 s   |
+| `retries`  | 12    |
+
+### Redis
+
+Redis responds to a `PING` command over the CLI. The check is simple and fast.
+
+```yaml
+healthcheck:
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+```
+
+| Parameter  | Value |
+| ---------- | ----- |
+| `interval` | 10 s  |
+| `timeout`  | 5 s   |
+| `retries`  | 12    |
+
+## Checking service status
+
+Use `docker compose ps` to see the current state and health of every container at a glance.
+
+<CodeGroup>
+
+```bash All services
+docker compose -f src/ai-sentinel/docker-compose.dev.yml ps
+```
+
+```bash Specific service
+docker compose -f src/ai-sentinel/docker-compose.dev.yml ps fleet
+```
+
+```bash Follow Fleet logs
+docker compose -f src/ai-sentinel/docker-compose.dev.yml logs -f fleet
+```
+
+```bash Recent logs (last 100 lines)
+docker compose -f src/ai-sentinel/docker-compose.dev.yml logs --tail=100 fleet
+```
+
+```bash All services logs
+docker compose -f src/ai-sentinel/docker-compose.dev.yml logs
+```
+
+</CodeGroup>
+
+<Tip>
+Pipe `docker compose ps` output through `grep -v healthy` to surface any container that is not yet reporting a healthy status.
+</Tip>
+
+## Fleet log configuration
+
+Fleet writes two separate log streams to the filesystem. Both paths are configured via environment variables and written inside the `logs` volume, which is mounted at `/logs` in the Fleet container.
+
+| Environment variable              | Purpose                                                        |
+| --------------------------------- | -------------------------------------------------------------- |
+| `FLEET_FILESYSTEM_STATUS_LOG_FILE` | Path for osquery status logs (agent lifecycle events)          |
+| `FLEET_FILESYSTEM_RESULT_LOG_FILE` | Path for osquery result logs (query output from enrolled hosts) |
+| `FLEET_LOGGING_JSON`               | Set to `true` to emit structured JSON logs instead of plaintext |
+
+The `FLEET_OSQUERY_STATUS_LOG_PLUGIN` variable controls which log destination receives osquery status messages. When set to `filesystem`, logs flow to the path defined by `FLEET_FILESYSTEM_STATUS_LOG_FILE`.
+
+```yaml
+# Fleet container volume binding
+volumes:
+  - logs:/logs
+```
+
+<Tip>
+Enable `FLEET_LOGGING_JSON=true` in any environment where logs are forwarded to an external aggregator (such as Loki, Elasticsearch, or CloudWatch Logs). Structured JSON makes field extraction reliable without custom parsing rules.
+</Tip>
+
+## Vulnerability scan monitoring
+
+Fleet runs scheduled vulnerability scans against the enrolled host inventory. Two environment variables govern how often scans run and where the vulnerability database is stored.
+
+| Environment variable                              | Purpose                                                           |
+| ------------------------------------------------- | ----------------------------------------------------------------- |
+| `FLEET_VULNERABILITIES_PERIODICITY`               | How frequently Fleet checks for new vulnerabilities (e.g., `1h`) |
+| `FLEET_VULNERABILITIES_DATABASES_PATH`            | Filesystem path where Fleet stores its vulnerability database     |
+| `FLEET_VULNERABILITIES_CURRENT_INSTANCE_CHECKS`  | Enables vulnerability checks on the current Fleet instance        |
+
+The vulnerability database is stored in the `vulndb` volume, which is mounted at `$FLEET_VULNERABILITIES_DATABASES_PATH` inside the Fleet container:
+
+```yaml
+volumes:
+  - vulndb:${FLEET_VULNERABILITIES_DATABASES_PATH}
+```
+
+<Tip>
+Monitor the `vulndb` volume size over time. Fleet downloads CVE data on each periodicity cycle; a stale or unexpectedly small database may indicate network connectivity issues preventing the download.
+</Tip>

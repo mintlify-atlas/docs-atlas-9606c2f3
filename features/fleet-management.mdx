@@ -1,0 +1,64 @@
+---
+title: "Fleet endpoint visibility and inventory"
+description: "Enroll, inventory, and continuously monitor every endpoint in your fleet — with real-time security posture and automated vulnerability scanning."
+keywords: ["fleet management", "endpoint inventory", "osquery", "FleetDM", "vulnerability scanning", "security posture"]
+---
+
+Fleet management in NextAudit AI gives your team a unified, real-time view of every device in your environment. Powered by FleetDM, the fleet layer continuously collects hardware and software inventory, tracks security posture, and scans for vulnerabilities — turning a distributed device population into a governable, observable surface that audit and security teams can act on.
+
+## Endpoint enrollment and inventory
+
+Before you can audit anything, every device needs to be visible. NextAudit AI uses FleetDM to enroll endpoints across your organization. Once enrolled, each device reports into a centralized inventory that captures:
+
+- Operating system version and patch level
+- Installed software packages and versions
+- Hardware identifiers and system configuration
+- Running processes and active network connections
+- User accounts and privilege assignments
+
+<Info>
+  FleetDM uses **osquery** under the hood — an open-source agent that exposes device state as a queryable SQL interface. This means your fleet data is consistent, structured, and queryable the same way across Windows, macOS, and Linux endpoints.
+</Info>
+
+## Real-time observability
+
+The README describes real-time fleet observability as a core platform priority. In practice this means the FleetDM layer continuously polls enrolled devices at a configurable interval. The `FLEET_OSQUERY_LABEL_UPDATE_INTERVAL` setting controls how frequently device labels and group memberships are refreshed, so your inventory reflects current state rather than a stale snapshot.
+
+Status and result logs from every osquery interaction are written to persistent storage (`FLEET_FILESYSTEM_STATUS_LOG_FILE`, `FLEET_FILESYSTEM_RESULT_LOG_FILE`), giving you a full historical record of device telemetry alongside the live view.
+
+<Tip>
+  Enable JSON-formatted logging (`FLEET_LOGGING_JSON=true`) to make fleet logs directly consumable by downstream automation pipelines in n8n without additional parsing.
+</Tip>
+
+## Security posture and policy checks
+
+Beyond inventory, FleetDM lets you define policies — SQL-based checks that run against enrolled devices on a schedule. A policy might verify that disk encryption is enabled, that a required agent is installed, or that a prohibited application is absent. Devices that fail a policy check are surfaced in the fleet dashboard so operators can prioritize remediation.
+
+<Note>
+  Policies in FleetDM are non-destructive read-only checks. They report compliance state but do not make changes to endpoints. Automated remediation workflows can be built on top using n8n.
+</Note>
+
+## Vulnerability scanning
+
+NextAudit AI configures FleetDM with dedicated vulnerability scanning capabilities. The platform manages a local vulnerability database (`vulndb` volume) so that CVE matching happens entirely within your infrastructure — no data leaves your environment to an external lookup service.
+
+Three settings govern how vulnerability scanning behaves:
+
+| Setting | Purpose |
+|---|---|
+| `FLEET_VULNERABILITIES_CURRENT_INSTANCE_CHECKS` | Enables or disables vulnerability checks on this Fleet instance |
+| `FLEET_VULNERABILITIES_DATABASES_PATH` | Path where the local vulnerability database is stored and updated |
+| `FLEET_VULNERABILITIES_PERIODICITY` | How often Fleet rescans software inventory against the CVE database |
+
+When a scan runs, FleetDM matches the software inventory it has collected from enrolled devices against known CVEs, and surfaces any matches with severity ratings so your team can prioritize patching.
+
+## Related services
+
+<CardGroup cols={2}>
+  <Card title="FleetDM service" icon="server" href="/services/fleetdm">
+    Configuration reference for the FleetDM service, including TLS setup, environment variables, and log paths.
+  </Card>
+  <Card title="Audit automation" icon="workflow" href="/features/audit-automation">
+    Connect fleet policy results to automated audit workflows using n8n.
+  </Card>
+</CardGroup>

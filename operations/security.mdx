@@ -1,0 +1,120 @@
+---
+title: "Security hardening for NextAudit AI"
+description: "Configure TLS, manage secrets, isolate internal services, and tune session policies to harden a production NextAudit AI deployment."
+---
+
+A production NextAudit AI deployment sits at the intersection of endpoint telemetry, compliance data, and AI-assisted analysis — all of it sensitive. The default configuration is intentionally minimal so that development environments start quickly, but before exposing the stack to a production network you must enable TLS on the Fleet server, replace every placeholder secret with a strong generated value, and confirm that internal services are not reachable outside the Docker network. This page walks through each layer of hardening in the order you should apply it.
+
+## TLS configuration for Fleet
+
+Fleet terminates TLS directly. When `FLEET_SERVER_TLS` is set to `true`, Fleet reads the certificate and private key from the paths defined by `FLEET_SERVER_CERT` and `FLEET_SERVER_KEY`.
+
+```yaml
+environment:
+  - FLEET_SERVER_TLS=${FLEET_SERVER_TLS}
+  - FLEET_SERVER_CERT=${FLEET_SERVER_CERT}
+  - FLEET_SERVER_KEY=${FLEET_SERVER_KEY}
+```
+
+Both certificate files are bind-mounted into the container from the `certs/` directory on the host:
+
+```yaml
+volumes:
+  - ./certs/fleet.crt:/fleet/fleet.crt:ro
+  - ./certs/fleet.key:/fleet/fleet.key:ro
+```
+
+The `:ro` flag mounts the files read-only inside the container so that the Fleet process cannot overwrite them.
+
+<Warning>
+Never set `FLEET_SERVER_TLS=false` in a production deployment. All osquery agents communicate with Fleet over this connection; disabling TLS exposes endpoint telemetry and enrollment secrets in plaintext.
+</Warning>
+
+Set the corresponding environment variables to the in-container paths:
+
+```bash
+FLEET_SERVER_TLS=true
+FLEET_SERVER_CERT=/fleet/fleet.crt
+FLEET_SERVER_KEY=/fleet/fleet.key
+```
+
+## Secret management
+
+### Fleet private key
+
+`FLEET_SERVER_PRIVATE_KEY` is used by Fleet for internal cryptographic operations. Generate a strong random value with OpenSSL:
+
+```bash
+openssl rand -base64 32
+```
+
+Paste the output directly into your `.env` file. Do not reuse this value across environments.
+
+<Warning>
+Never commit `.env` files containing real secrets to version control. Add all `*.env` files (except `*.env.example`) to `.gitignore` before your first commit.
+</Warning>
+
+### Fleet license key
+
+`FLEET_LICENSE_KEY` activates Fleet Premium features. Store this value the same way as the private key — in a `.env` file that is excluded from version control, or in a secrets manager injected at deploy time.
+
+### Database passwords
+
+Three separate password variables protect the MySQL instance:
+
+| Variable              | Purpose                                          |
+| --------------------- | ------------------------------------------------ |
+| `MYSQL_ROOT_PASSWORD` | MySQL root account — used only for initial setup |
+| `MYSQL_PASSWORD`      | Runtime password used by Fleet to connect        |
+| `POSTGRES_PASSWORD`   | Password for the PostgreSQL user shared by Flowise |
+
+PostgreSQL uses `POSTGRES_PASSWORD` to protect the database shared by Flowise.
+
+<Warning>
+Use distinct, randomly generated passwords for `MYSQL_ROOT_PASSWORD` and `MYSQL_PASSWORD`. If the Fleet application account is compromised, a separate root password limits the attacker's ability to modify MySQL system tables.
+</Warning>
+
+<Tip>
+Generate each database password with `openssl rand -base64 24` to produce a 32-character URL-safe string. Avoid passwords that contain `@`, `/`, or `#` as these can break connection string parsing in some drivers.
+</Tip>
+
+## Network isolation
+
+All services communicate over the internal Docker Compose network by address. The Fleet container reaches MySQL at `mysql:3306` and Redis at `redis:6379` — neither service needs to be reachable from the host or any external network.
+
+```yaml
+environment:
+  - FLEET_REDIS_ADDRESS=redis:6379
+  - FLEET_MYSQL_ADDRESS=mysql:3306
+```
+
+<Warning>
+Review which ports are bound to `0.0.0.0` (all interfaces) in the `ports:` stanzas. In production, bind internal services to `127.0.0.1` or remove their host port mappings entirely. Only Fleet's UI/API port needs to be externally reachable.
+</Warning>
+
+<Tip>
+Place a reverse proxy (such as nginx or Caddy) in front of Fleet to handle certificate renewal, rate limiting, and access logging without exposing the Fleet process directly to the internet.
+</Tip>
+
+## Session configuration
+
+`FLEET_SESSION_DURATION` controls how long an authenticated Fleet session remains valid before requiring re-login. Set this to the shortest duration that is practical for your operators.
+
+```bash
+FLEET_SESSION_DURATION=24h
+```
+
+Shorter session durations reduce the window of exposure if a session token is leaked.
+
+## n8n settings file permissions
+
+n8n enforces strict file permissions on its settings file when `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS` is set to `true`. This is enabled by default in all three compose environments:
+
+```yaml
+environment:
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+```
+
+<Warning>
+Do not set `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false`. Relaxing this setting allows other processes in the container to read n8n's stored credentials, which may include API keys for connected services used in your audit workflows.
+</Warning>

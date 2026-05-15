@@ -1,0 +1,100 @@
+---
+title: "Flowise AI: visual agent flows for audit"
+description: "Flowise provides the AI layer in NextAudit AI, enabling visual LLM chains and agent flows backed by pgvector embeddings for audit analysis and triage."
+keywords: ["flowise", "AI", "LLM", "agent", "embeddings", "pgvector", "audit"]
+---
+
+Flowise is the visual AI composition layer in NextAudit AI. It lets you build LLM-powered chains and autonomous agents through a drag-and-drop interface, connecting to the self-hosted Ollama inference service and storing vector embeddings in the pgvector-enabled PostgreSQL instance. This keeps all AI computation and data within the stack, with no dependency on external AI providers.
+
+## Service configuration
+
+Flowise runs from the `flowiseai/flowise:latest` image. Both the host and container ports are set to `FLOWISE_PORT`, so the container listens on the same port number it exposes.
+
+```yaml
+flowise:
+  image: flowiseai/flowise:latest
+  container_name: flowise
+  ports:
+    - "${FLOWISE_PORT}:${FLOWISE_PORT}"
+  volumes:
+    - flowise_data:/root/.flowise
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+```
+
+Flowise waits for the `postgres` service to pass its health check before starting, ensuring the database schema is available when Flowise initializes.
+
+## Environment variables
+
+```yaml
+environment:
+  PORT: ${FLOWISE_PORT}
+  DATABASE_SCHEMA: ${DATABASE_SCHEMA}
+  DATABASE_TYPE: postgres
+  DATABASE_HOST: postgres
+  DATABASE_PORT: 5432
+  DATABASE_NAME: ${POSTGRES_DB}
+  DATABASE_USER: ${POSTGRES_USER}
+  DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+```
+
+| Variable | Value | Description |
+| -------- | ----- | ----------- |
+| `PORT` | `${FLOWISE_PORT}` | Port Flowise listens on inside the container |
+| `DATABASE_TYPE` | `postgres` | Selects the PostgreSQL driver |
+| `DATABASE_HOST` | `postgres` | Docker service name of the PostgreSQL container |
+| `DATABASE_PORT` | `5432` | Standard PostgreSQL port |
+| `DATABASE_NAME` | `${POSTGRES_DB}` | Database name created during PostgreSQL initialization |
+| `DATABASE_SCHEMA` | `${DATABASE_SCHEMA}` | PostgreSQL schema Flowise uses for its tables |
+| `DATABASE_USER` | `${POSTGRES_USER}` | Database user with read/write access |
+| `DATABASE_PASSWORD` | `${POSTGRES_PASSWORD}` | Credential for the database user |
+
+## Volume
+
+```yaml
+volumes:
+  - flowise_data:/root/.flowise
+```
+
+The `flowise_data` volume stores uploaded files, flow definitions saved locally, and any configuration that Flowise writes to disk. The database-backed metadata (flows, credentials, chat history) lives in PostgreSQL.
+
+## pgvector integration
+
+The PostgreSQL instance in this stack is built with the `pgvector` extension enabled. Flowise uses this to store and query vector embeddings generated during document ingestion and retrieval-augmented generation (RAG) flows. The `EMBEDDING_SIZE` environment variable on the PostgreSQL service controls the vector dimension — this must match the embedding model you configure inside Flowise.
+
+<Info>
+When building RAG flows, use the **Postgres** vector store node in Flowise and point it at `DATABASE_HOST=postgres`. The pgvector extension handles similarity search directly in SQL, keeping embedding retrieval within the stack.
+</Info>
+
+## AI flow types for audit
+
+<CardGroup cols={2}>
+  <Card title="Q&A chains" icon="message-circle">
+    Build question-answering flows over ingested audit documents, policy PDFs, or FleetDM inventory exports. Users or n8n workflows can query the knowledge base in natural language.
+  </Card>
+  <Card title="Document analysis" icon="file-search">
+    Run LLM chains over osquery result sets or vulnerability reports to extract structured findings, classify severity, and generate human-readable summaries.
+  </Card>
+  <Card title="Alert triage" icon="triangle-alert">
+    Create agent flows that receive a raw alert from n8n, look up context from the vector store, and return a triage decision with a recommended action.
+  </Card>
+  <Card title="Policy compliance" icon="shield-check">
+    Chain FleetDM policy results through an LLM to explain non-compliance in plain language and suggest remediation steps tailored to the specific host configuration.
+  </Card>
+</CardGroup>
+
+## Connecting to Ollama
+
+Inside the Flowise UI, add an **Ollama** chat model node and set the base URL to `http://ollama:11434`. This uses Docker's internal DNS to reach the Ollama service directly without going through the host network. See [Ollama: self-hosted LLM inference](/services/ollama) for the full Ollama service configuration.
+
+## Accessing the Flowise UI
+
+The Flowise editor is available at:
+
+```
+http://<host>:${FLOWISE_PORT}
+```
+
+From the UI you can create new flows, manage credentials, configure vector store integrations, and monitor chat sessions. Flows can also be triggered programmatically via the Flowise REST API, which n8n uses to call AI flows as part of larger audit pipelines.

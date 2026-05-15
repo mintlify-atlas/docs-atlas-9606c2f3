@@ -1,0 +1,46 @@
+---
+title: "NextAudit AI: Intelligent Fleet and Endpoint Audit"
+description: "NextAudit AI is a SaaS audit platform that transforms technical telemetry into auditable decisions for IT, security, and operations teams."
+keywords: ["nextaudit", "fleet management", "endpoint audit", "AI compliance", "osquery", "FleetDM"]
+---
+
+NextAudit AI is an intelligent SaaS audit platform built on a cyber-industrial microservices architecture. It transforms raw technical telemetry from distributed endpoint fleets into auditable, traceable decisions — giving IT, security, and operations teams the observability and governance they need to meet internal policies or regulatory requirements without manual effort.
+
+## Vision
+
+The platform exists to close the gap between infrastructure data and compliance evidence. Rather than requiring engineers to manually correlate logs, run ad-hoc queries, and produce reports, NextAudit AI continuously collects endpoint telemetry, applies AI-assisted analysis, and automates audit workflows — producing a governed, auditable record of your fleet's state at any point in time.
+
+<Info>
+  NextAudit AI is currently evolving toward a full SaaS product, with active development on the `develop` branch. The architecture documented here reflects the current microservices stack.
+</Info>
+
+## Key capabilities
+
+NextAudit AI delivers three core areas of value:
+
+**Fleet observability** — Real-time endpoint inventory, security posture, and vulnerability data powered by FleetDM and osquery. Every device in your fleet becomes a queryable, observable node.
+
+**AI-assisted analysis** — Flowise provides AI agent flows that analyze fleet data, surface anomalies, and assist operators in understanding and responding to audit findings. Ollama runs LLM inference on-premises, keeping sensitive data private.
+
+**Automated compliance** — n8n orchestrates audit workflows that run continuously against your fleet, enforcing policies and generating traceable output without manual intervention.
+
+<Note>
+  All services are deployed as Docker containers and coordinated through Docker Compose, enabling reproducible deployments across development, testing, and production environments.
+</Note>
+
+## Explore NextAudit AI
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy the full audit stack locally in minutes using Docker Compose.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how FleetDM, n8n, Flowise, Ollama, and the databases work together.
+  </Card>
+  <Card title="Deployment guide" icon="cloud-arrow-up" href="/deployment/overview">
+    Configure and deploy to development, test, and production environments.
+  </Card>
+  <Card title="Fleet management" icon="server" href="/features/fleet-management">
+    Explore real-time endpoint visibility, inventory, and posture monitoring.
+  </Card>
+</CardGroup>
